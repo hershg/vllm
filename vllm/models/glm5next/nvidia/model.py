@@ -63,6 +63,7 @@ from vllm.model_executor.models.interfaces import (
     HasInnerState,
     IsHybrid,
     MixtureOfExperts,
+    SupportsLoRA,
     SupportsPP,
 )
 from vllm.model_executor.models.utils import (
@@ -865,8 +866,25 @@ class Glm5NextModel(nn.Module):
 
 
 class Glm5NextForCausalLM(
-    nn.Module, HasInnerState, SupportsPP, MixtureOfExperts, IsHybrid
+    nn.Module, HasInnerState, SupportsLoRA, SupportsPP, MixtureOfExperts, IsHybrid
 ):
+    packed_modules_mapping = {
+        "gate_up_proj": ["gate_proj", "up_proj"],
+        # MLA layers combine query and KV down projections.
+        "fused_qkv_a_proj": ["q_a_proj", "kv_a_proj_with_mqa"],
+        # KDA layers combine q, k, v, beta and the two low-rank gate projections.
+        # The adapter loader uses this mapping to place an HF-format LoRA update
+        # in the fused inference module instead of silently skipping it.
+        "in_proj_qkvbfg_a": [
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "b_proj",
+            "f_a_proj",
+            "g_a_proj",
+        ],
+    }
+
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
         super().__init__()
         self.model_config = vllm_config.model_config
