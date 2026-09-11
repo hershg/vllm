@@ -31,6 +31,7 @@ from vllm.lora.layers import (
 )
 from vllm.lora.lora_weights import LoRALayerWeights, PackedLoRALayerWeights
 from vllm.lora.punica_wrapper import get_punica_wrapper
+from vllm.model_executor.custom_op import op_registry_oot
 from vllm.model_executor.layers.linear import (
     ColumnParallelLinear,
     MergedColumnParallelLinear,
@@ -1637,6 +1638,31 @@ def test_variable_slice_lora_class_selection(default_vllm_config, dist_init):
         "MergedColumnParallelLinearVariableSliceWithLoRA "
         "should NOT handle 2 slices even with empty packed_modules_list"
     )
+
+
+def test_deepseek_fused_qkv_a_proj_lora_with_oot_merged_linear():
+    class OOTMergedColumnParallelLinear(MergedColumnParallelLinear):
+        pass
+
+    layer = object.__new__(DeepSeekV2FusedQkvAProjLinear)
+    object.__setattr__(layer, "tp_size", 1)
+    lora_config = LoRAConfig(
+        max_loras=8,
+        max_lora_rank=8,
+        lora_dtype=torch.float16,
+    )
+
+    with patch.dict(
+        op_registry_oot,
+        {"MergedColumnParallelLinear": OOTMergedColumnParallelLinear},
+    ):
+        can_replace = MergedColumnParallelLinearWithLoRA.can_replace_layer(
+            source_layer=layer,
+            lora_config=lora_config,
+            packed_modules_list=["q_a_proj", "kv_a_proj_with_mqa"],
+        )
+
+    assert can_replace
 
 
 @pytest.mark.parametrize(

@@ -372,7 +372,12 @@ class MergedColumnParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
         decorate: bool = True,
     ) -> bool:
         merged_cls = maybe_get_oot_by_class(MergedColumnParallelLinear)
-        if not isinstance(source_layer, merged_cls) or len(packed_modules_list) != 2:
+        # An in-tree subclass may still exist after an OOT replacement is
+        # registered for its base class.
+        if (
+            not isinstance(source_layer, (MergedColumnParallelLinear, merged_cls))
+            or len(packed_modules_list) != 2
+        ):
             return False
 
         tp_size = getattr(source_layer, "tp_size", 1)
