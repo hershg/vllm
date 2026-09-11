@@ -1003,6 +1003,15 @@ class Glm5NextForCausalLM(
 class Glm5NextForConditionalGeneration(
     Glm4vForConditionalGeneration, HasInnerState, IsHybrid, MixtureOfExperts
 ):
+    # LoRA discovers packed projections from the outer model class and stops
+    # before inspecting children when that mapping is non-empty. Preserve the
+    # multimodal base mappings while surfacing the native text model's fused
+    # projections used by GLM-5.3-Flash.
+    packed_modules_mapping = {
+        **Glm4vForConditionalGeneration.packed_modules_mapping,
+        **Glm5NextForCausalLM.packed_modules_mapping,
+    }
+
     # The text model (KDA + dense-MLA + MoE) is a hybrid mamba model. The
     # multimodal wrapper must declare the same interfaces so vLLM treats it as
     # hybrid (auto-aligns mamba/attention block sizes, sizes the mamba state
