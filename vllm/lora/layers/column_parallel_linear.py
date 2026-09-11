@@ -258,9 +258,14 @@ class MergedColumnParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
             zip(self.output_ids, self.output_slices)
         ):
             if (lora_b_i := lora_b[i]) is not None:
-                sliced_lora_b[i] = lora_b_i[
-                    shard_size * shard_id : shard_size * (shard_id + 1), :
-                ]
+                # Weight-sync callers may already provide this rank's shard.
+                # Re-slicing that tensor makes every rank above zero empty.
+                if lora_b_i.shape[0] == shard_size:
+                    sliced_lora_b[i] = lora_b_i
+                else:
+                    sliced_lora_b[i] = lora_b_i[
+                        shard_size * shard_id : shard_size * (shard_id + 1), :
+                    ]
         return sliced_lora_b
 
     def expand_packed_lora(
@@ -325,6 +330,22 @@ class MergedColumnParallelLinearWithLoRA(ColumnParallelLinearWithLoRA):
         lora_b: torch.Tensor | list[torch.Tensor],
     ):
         self.reset_lora(index)
+
+        # A checkpoint may deliver one fused tensor for a multi-slice layer.
+        # Split LoRA-B by output size and share LoRA-A across the slices.
+        if isinstance(lora_b, torch.Tensor):
+            output_sizes = getattr(self.base_layer, "output_sizes", None)
+            if output_sizes is not None and len(output_sizes) == self.n_slices:
+                start = 0
+                lora_b_list = []
+                for size in output_sizes:
+                    lora_b_list.append(lora_b[start : start + size])
+                    start += size
+                lora_b = lora_b_list
+            else:
+                lora_b = list(lora_b.chunk(self.n_slices, dim=0))
+        if isinstance(lora_a, torch.Tensor):
+            lora_a = [lora_a] * self.n_slices
 
         # Expand packed adapter groups when they don't match n_slices.
         # E.g. in_proj_qkv (covers Q+K+V) + in_proj_z as 2 groups for a

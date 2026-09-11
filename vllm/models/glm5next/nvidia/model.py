@@ -905,6 +905,8 @@ class Glm5NextForCausalLM(
             "f_a_proj",
             "g_a_proj",
         ],
+        "wk_weights_proj": ["wk", "weights_proj"],
+        "qkv": ["qkv"],
     }
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
