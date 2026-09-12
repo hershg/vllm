@@ -85,12 +85,17 @@ echo "Reference: $DEEPGEMM_GIT_REF"
 INSTALL_DIR=$(mktemp -d)
 trap 'rm -rf "$INSTALL_DIR"' EXIT
 
-# Clone the repository
-git clone --recursive --shallow-submodules "$DEEPGEMM_GIT_REPO" "$INSTALL_DIR/deepgemm"
+# Fetch the exact commit, including refs that are not on the default branch
+git clone --no-checkout --filter=blob:none "$DEEPGEMM_GIT_REPO" "$INSTALL_DIR/deepgemm"
 pushd "$INSTALL_DIR/deepgemm"
-
-# Checkout the specific reference
-git checkout "$DEEPGEMM_GIT_REF"
+git fetch --depth=1 origin "$DEEPGEMM_GIT_REF"
+git checkout FETCH_HEAD
+git submodule update --init --recursive --depth=1
+observed_ref=$(git rev-parse HEAD)
+if [ "$observed_ref" != "$DEEPGEMM_GIT_REF" ]; then
+    echo "DeepGEMM source receipt mismatch: expected $DEEPGEMM_GIT_REF, got $observed_ref" >&2
+    exit 1
+fi
 
 # Clean previous build artifacts
 # (Based on https://github.com/deepseek-ai/DeepGEMM/blob/main/install.sh)
