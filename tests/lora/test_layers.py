@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import inspect
 import random
 from copy import deepcopy
 from dataclasses import dataclass
@@ -1812,3 +1813,18 @@ def test_replicated_lora_preserves_base_forward_for_subclasses(
     merged_result = merged_layer(torch.cat(inputs))[0]
 
     torch.testing.assert_close(lora_result, merged_result, rtol=rtol, atol=atol)
+
+
+@pytest.mark.parametrize("dcp", [False, True])
+def test_mla_context_prefill_accepts_existing_non_lora_callers(dcp):
+    from vllm.model_executor.layers.attention.mla_attention import MLACommonBaseImpl
+
+    method = (
+        MLACommonBaseImpl._context_parallel_compute_prefill_context
+        if dcp
+        else MLACommonBaseImpl._compute_prefill_context
+    )
+    kwargs: dict[str, object] = {"k_scale": None}
+    if dcp:
+        kwargs["dcp_world_size"] = 2
+    inspect.signature(method).bind(None, None, None, None, **kwargs)
