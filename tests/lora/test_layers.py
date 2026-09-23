@@ -79,8 +79,9 @@ def test_mla_cached_projection_applies_updated_adapters(
         base = ColumnParallelLinear(512, 32, bias=False, params_dtype=dtype)
     base.weight.zero_()
     # The backend holds the original projection before module-tree wrapping.
-    impl = SimpleNamespace()
-    MLACommonBaseImpl.__init__(impl, 1, 512, 1.0, 1, "auto", 512, 16, 0, 16, 16, base)
+    # The optimized concat kernel requires 128 heads; this fixture has one.
+    impl = SimpleNamespace(_use_flashinfer_concat_mla_k=False)
+    MLACommonBaseImpl.__init__(impl, 1, 576, 1.0, 1, "auto", 512, 16, 64, 80, 16, base)
     impl._concat_k_nope_k_pe = MethodType(MLACommonBaseImpl._concat_k_nope_k_pe, impl)
     layer = ColumnParallelLinearWithLoRA(base)
     layer.create_lora_weights(1, config)
@@ -90,7 +91,7 @@ def test_mla_cached_projection_applies_updated_adapters(
     chunked = build_mla_chunked_context_metadata(
         context_lens_cpu=torch.tensor([context_rows], dtype=torch.int32),
         prefill_query_start_loc_cpu=torch.tensor([0, 2], dtype=torch.int32),
-        chunked_prefill_workspace=torch.empty((16, 512), dtype=dtype, device=device),
+        chunked_prefill_workspace=torch.empty((16, 576), dtype=dtype, device=device),
         chunked_prefill_workspace_size=16,
         block_size=16,
         align_chunk_to_block=True,
@@ -102,7 +103,8 @@ def test_mla_cached_projection_applies_updated_adapters(
     captured = []
 
     def capture_projection(*, chunk, q, k, v):
-        captured.append(torch.cat((k, v), dim=-1).squeeze(1).clone())
+        torch.testing.assert_close(k[..., 16:], torch.ones_like(k[..., 16:]))
+        captured.append(torch.cat((k[..., :16], v), dim=-1).squeeze(1).clone())
         return torch.zeros((2, 1, 16), dtype=dtype, device=device), torch.zeros(
             (1, 2), device=device
         )
@@ -119,7 +121,7 @@ def test_mla_cached_projection_applies_updated_adapters(
     )
     method = MLACommonBaseImpl._compute_prefill_context
     a = torch.full((8, 512), 0.125, dtype=dtype, device=device)
-    cache = torch.ones((1, 16, 512), dtype=dtype, device=device)
+    cache = torch.ones((1, 16, 576), dtype=dtype, device=device)
     for value in (0.125, 0.25):
         b = torch.full((32, 8), value, dtype=dtype, device=device)
         layer.set_lora(0, a, b)
@@ -130,7 +132,7 @@ def test_mla_cached_projection_applies_updated_adapters(
         torch.testing.assert_close(layer(fresh)[0], expected[:2], rtol=0, atol=0)
         method(
             impl,
-            torch.zeros((2, 1, 16), dtype=dtype, device=device),
+            torch.zeros((2, 1, 80), dtype=dtype, device=device),
             cache,
             metadata,
             torch.ones((), device=device),
@@ -278,7 +280,7 @@ def test_mla_absorbed_projection_applies_updated_adapters(
 @pytest.mark.skipif(not current_platform.is_cuda(), reason="CUDA LoRA projection")
 def test_indexer_gate_applies_lora_with_fp32_base(default_vllm_config, dist_init):
     """A gate adapter must reach the indexer without rounding its base to BF16."""
-    from vllm.models.glm5next.common import attention
+    from vllm.models.glm5next.nvidia import attention
 
     torch.manual_seed(53)
     tokens, columns, heads, dim, rank = 7, 32, 32, 128, 8
